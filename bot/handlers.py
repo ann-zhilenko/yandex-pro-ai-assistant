@@ -64,6 +64,17 @@ async def _safe_send(
         )
 
 
+async def _send_typing(message: Message) -> None:
+    """Отправляет статус 'печатает...' в чат. Не критично — игнорируем ошибки."""
+    try:
+        await message.bot.send_chat_action(
+            chat_id=message.chat.id,
+            action="typing",
+        )
+    except Exception:
+        pass
+
+
 def get_retriever() -> Retriever:
     """Возвращает singleton-ретривер."""
     global _retriever
@@ -151,7 +162,7 @@ async def handle_text_message(message: Message) -> None:
         message.from_user.username or "без username",
         message.text[:80],
     )
-    await message.chat.do_action("typing")
+    await _send_typing(message)
     await process_question(message, message.from_user.id, message.from_user.username, message.text)
 
 
@@ -243,7 +254,7 @@ async def process_question(
 
         # 4. LLM-генерация (1 API-вызов)
         t_llm_start = time.monotonic()
-        await message.chat.do_action("typing")
+        await _send_typing(message)
         answer_text = await generate_answer(question, context, client=client)
         t_llm = time.monotonic()
         logger.info(
