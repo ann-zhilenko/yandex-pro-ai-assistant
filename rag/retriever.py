@@ -73,6 +73,7 @@ class Retriever:
         query: str,
         category: str | None = None,
         driver_type: str | None = None,
+        region: str | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> list[SearchResult]:
         """Ищет top-K релевантных чанков по запросу.
@@ -81,6 +82,9 @@ class Retriever:
             query: текст запроса.
             category: фильтр по категории (если определена классификатором).
             driver_type: фильтр по типу водителя.
+            region: код региона запроса ('kz', 'by', ...) или None.
+                Статьи с другим регионом исключаются; статьи без региона
+                (универсальные) показываются всегда.
             client: переиспользуемый httpx-клиент.
 
         Returns:
@@ -100,18 +104,22 @@ class Retriever:
         # Cosine similarity (матрица уже нормализована)
         scores = self._embeddings @ query_vec
 
-        # Фильтрация по категории и типу водителя
-        mask = np.ones(len(self._metadata), dtype=bool)
+        # Мягкий буст по категории и типу водителя (не исключаем, а повышаем скор)
+        # Жёсткий фильтр приводил к false negatives при ошибке классификатора
+        score_boost = np.ones(len(self._metadata), dtype=np.float32)
         for i, meta in enumerate(self._metadata):
-            if category and meta["category"] != category:
-                mask[i] = False
-            if driver_type and meta["driver_types"] and driver_type not in meta["driver_types"]:
-                # Не отфильтровываем чанки без указания типа — они универсальные
-                if meta["driver_types"]:
-                    mask[i] = False
+            if category and meta["category"] == category:
+                score_boost[i] *= 1.15  # +15% за совпадение категории
+            if driver_type and meta["driver_types"] and driver_type in meta["driver_types"]:
+                score_boost[i] *= 1.10  # +10% за совпадение типа водителя
+            # Региональная фильтрация: исключаем статьи другого региона
+            # Статьи без region (универсальные) показываются всегда
+            article_region = meta.get("region")
+            if article_region is not None and article_region != region:
+                score_boost[i] = 0.0
 
-        # Применяем фильтр
-        scores = np.where(mask, scores, -1.0)
+        # Применяем буст
+        scores = scores * score_boost
 
         # Top-K
         top_indices = np.argsort(scores)[::-1][:settings.top_k]

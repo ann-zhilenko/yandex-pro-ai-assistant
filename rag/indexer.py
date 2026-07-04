@@ -29,6 +29,7 @@ class Chunk:
     title: str
     category: str
     driver_types: list[str]
+    region: str | None
     url: str
     text: str
 
@@ -91,6 +92,7 @@ def _build_chunks(articles: list[dict]) -> list[Chunk]:
                     title=article["title"],
                     category=article["category"],
                     driver_types=article.get("driver_type", []),
+                    region=article.get("region"),
                     url=article["url"],
                     text=text,
                 )
@@ -127,6 +129,7 @@ async def index_knowledge_base() -> None:
             "title": c.title,
             "category": c.category,
             "driver_types": c.driver_types,
+            "region": c.region,
             "url": c.url,
             "text": c.text,
         }

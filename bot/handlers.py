@@ -201,8 +201,8 @@ async def process_question(
     features = classify(question)
     t_class = time.monotonic()
     logger.info(
-        "[user=%d] Шаг 1/4 — классификация: category=%s, driver_type=%s, kz=%s (%.2fs)",
-        user_id, features.category, features.driver_type, features.is_kz_context,
+        "[user=%d] Шаг 1/4 — классификация: category=%s, driver_type=%s, region=%s (%.2fs)",
+        user_id, features.category, features.driver_type, features.region,
         t_class - t_start,
     )
 
@@ -215,6 +215,7 @@ async def process_question(
             query=question,
             category=features.category,
             driver_type=features.driver_type,
+            region=features.region,
             client=client,
         )
         t_search = time.monotonic()

@@ -2,6 +2,10 @@
 
 callback_data ограничен 64 байтами (UTF-8), поэтому для FAQ-кнопок
 используем короткие индексы: faq:{category}:{idx} вместо полного текста.
+
+FAQ-пункты — кортежи (short_label, search_query):
+  - short_label: короткий текст на кнопке (Telegram обрезает длинные)
+  - search_query: полный запрос для RAG-поиска
 """
 
 from __future__ import annotations
@@ -20,29 +24,30 @@ CATEGORY_LABELS: dict[str, str] = {
 }
 
 # ── Частые вопросы по категории ────────────────────────────────
+# (короткая подпись на кнопке, поисковый запрос для RAG)
 
-FAQ_QUESTIONS: dict[str, list[str]] = {
+FAQ_QUESTIONS: dict[str, list[tuple[str, str]]] = {
     "payments": [
-        "Какая комиссия Яндекса с заказа?",
-        "Когда придут деньги за заказы?",
-        "Как получить бонус за активность?",
+        ("Комиссия с заказа", "Какая комиссия Яндекса с заказа?"),
+        ("Когда придут деньги?", "Когда придут деньги за заказы?"),
+        ("Бонусы за активность", "Как получить бонус за активность?"),
     ],
     "documents": [
-        "Как оформить самозанятость?",
-        "Где получить лицензию таксиста?",
-        "Как подписать документы через ЭДО?",
+        ("Самозанятость", "Как оформить самозанятость?"),
+        ("Лицензия таксиста", "Где получить лицензию таксиста?"),
+        ("Подписать ЭДО", "Как подписать документы через ЭДО?"),
     ],
     "app": [
-        "Приложение зависло, что делать?",
-        "Не работает навигатор в приложении",
+        ("Приложение зависло", "Приложение зависло, что делать?"),
+        ("Не работает навигатор", "Не работает навигатор в приложении"),
     ],
     "rules": [
-        "Как повысить рейтинг?",
-        "Что будет за отмену заказа?",
+        ("Повысить рейтинг", "Как повысить рейтинг?"),
+        ("Отмена заказа", "Что будет за отмену заказа?"),
     ],
     "onboarding": [
-        "Как начать работать в Яндекс Про?",
-        "Какие документы нужны для старта?",
+        ("Как начать работать", "Как начать работать в Яндекс Про?"),
+        ("Документы для работы", "Какие документы нужны для регистрации водителя?"),
     ],
 }
 
@@ -59,21 +64,21 @@ def category_keyboard() -> InlineKeyboardMarkup:
 def faq_keyboard(category: str) -> InlineKeyboardMarkup:
     """Кнопки с частыми вопросами по выбранной категории.
 
-    callback_data формат: faq:{category}:{idx} — короткий, до 64 байт.
+    На кнопке — короткая подпись, в callback_data — индекс.
     """
     builder = InlineKeyboardBuilder()
-    for idx, question in enumerate(FAQ_QUESTIONS.get(category, [])):
-        builder.button(text=question, callback_data=f"faq:{category}:{idx}")
+    for idx, (label, _query) in enumerate(FAQ_QUESTIONS.get(category, [])):
+        builder.button(text=label, callback_data=f"faq:{category}:{idx}")
     builder.button(text="⬅️ Назад", callback_data="back_to_menu")
     builder.adjust(1)
     return builder.as_markup()
 
 
 def get_faq_question(category: str, idx: int) -> str | None:
-    """Возвращает текст FAQ-вопроса по категории и индексу."""
+    """Возвращает поисковый запрос FAQ-вопроса по категории и индексу."""
     questions = FAQ_QUESTIONS.get(category, [])
     if 0 <= idx < len(questions):
-        return questions[idx]
+        return questions[idx][1]  # search_query, не label
     return None
 
 

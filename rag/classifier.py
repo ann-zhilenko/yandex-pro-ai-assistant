@@ -1,7 +1,7 @@
 """Эвристический классификатор запроса по ключевым словам.
 
 Бесплатная альтернатива LLM-классификации: определяет категорию
-запроса, тип водителя и язык — без API-вызова.
+запроса, тип водителя, язык и регион — без API-вызова.
 """
 
 from __future__ import annotations
@@ -42,10 +42,22 @@ _DRIVER_TYPE_KEYWORDS: dict[str, list[str]] = {
     "courier": ["курьер", "доставка", "посылка", "ресторан", "магазин", "пакет", "груз"],
 }
 
-_KZ_KEYWORDS: list[str] = [
-    "казахстан", "алматы", "астана", "тенге", "мрп", "каспий", "иины", "эдо",
-    "ндс", "закрывающ",
-]
+# ── Регионы: словарь ключевых слов по странам ──────────────────
+# Добавление нового региона = просто добавить запись сюда.
+# Статьи с region=None (универсальные) показываются для всех регионов.
+
+_REGION_KEYWORDS: dict[str, list[str]] = {
+    "kz": [
+        "казахстан", "алматы", "астана", "тенге", "мрп", "каспий",
+        "иин", "эдо", "ндс", "закрывающ",
+    ],
+    "by": [
+        "беларус", "минск", "белорус", "бнс", "рб",
+    ],
+    "uz": [
+        "узбекистан", "ташкент", "сум", "сўм", "узб",
+    ],
+}
 
 
 @dataclass
@@ -54,8 +66,8 @@ class QueryFeatures:
 
     category: str | None      # payments / documents / app / rules / onboarding
     driver_type: str | None   # taxi / courier
-    language: str             # ru / kz
-    is_kz_context: bool       # относится ли запрос к Казахстану
+    language: str             # ru / kz / by / uz ...
+    region: str | None        # kz / by / uz / None (универсальный)
 
 
 def _match(text: str, keywords: list[str]) -> bool:
@@ -64,8 +76,21 @@ def _match(text: str, keywords: list[str]) -> bool:
     return any(kw in text_lower for kw in keywords)
 
 
+def _detect_region(text: str) -> str | None:
+    """Определяет регион запроса по ключевым словам.
+
+    Возвращает код региона ('kz', 'by', 'uz') или None,
+    если запрос не привязан к конкретному региону.
+    """
+    text_lower = text.lower()
+    for region_code, keywords in _REGION_KEYWORDS.items():
+        if any(kw in text_lower for kw in keywords):
+            return region_code
+    return None
+
+
 def classify(text: str) -> QueryFeatures:
-    """Определяет категорию, тип водителя и контекст запроса.
+    """Определяет категорию, тип водителя и регион запроса.
 
     Использует простейший поиск ключевых слов — без LLM, бесплатно.
     Если несколько категорий совпадают — берём ту, где больше совпадений.
@@ -86,12 +111,12 @@ def classify(text: str) -> QueryFeatures:
             driver_type = dtype
             break
 
-    # Контекст Казахстана
-    is_kz = _match(text, _KZ_KEYWORDS)
+    # Регион
+    region = _detect_region(text)
 
     return QueryFeatures(
         category=best_category,
         driver_type=driver_type,
-        language="kz" if is_kz else "ru",
-        is_kz_context=is_kz,
+        language=region or "ru",
+        region=region,
     )
