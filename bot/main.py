@@ -21,8 +21,10 @@ from bot.handlers import (
     cmd_start,
     handle_back_to_menu,
     handle_category,
+    handle_change_region,
     handle_faq_question,
     handle_feedback,
+    handle_region,
     handle_text_message,
 )
 from config import settings
@@ -39,6 +41,8 @@ def register_handlers(dp: Dispatcher) -> None:
     """Регистрирует все хендлеры в диспетчере."""
     dp.message.register(cmd_start, Command("start"))
 
+    dp.callback_query.register(handle_region, F.data.startswith("region:"))
+    dp.callback_query.register(handle_change_region, F.data == "change_region")
     dp.callback_query.register(handle_category, F.data.startswith("cat:"))
     dp.callback_query.register(handle_back_to_menu, F.data == "back_to_menu")
     dp.callback_query.register(handle_faq_question, F.data.startswith("faq:"))

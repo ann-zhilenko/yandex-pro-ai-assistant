@@ -23,6 +23,15 @@ CATEGORY_LABELS: dict[str, str] = {
     "onboarding": "🚀 Как начать",
 }
 
+# ── Регионы ────────────────────────────────────────────────────
+
+REGION_LABELS: dict[str, str] = {
+    "ru": "🇷🇺 Россия",
+    "kz": "🇰🇿 Казахстан",
+    "by": "🇧🇾 Беларусь",
+    "uz": "🇺🇿 Узбекистан",
+}
+
 # ── Частые вопросы по категории ────────────────────────────────
 # (короткая подпись на кнопке, поисковый запрос для RAG)
 
@@ -52,12 +61,24 @@ FAQ_QUESTIONS: dict[str, list[tuple[str, str]]] = {
 }
 
 
-def category_keyboard() -> InlineKeyboardMarkup:
-    """Главное меню с кнопками-категориями."""
+def category_keyboard(current_region: str | None = None) -> InlineKeyboardMarkup:
+    """Главное меню с кнопками-категориями + смена региона."""
     builder = InlineKeyboardBuilder()
     for cat_id, label in CATEGORY_LABELS.items():
         builder.button(text=label, callback_data=f"cat:{cat_id}")
-    builder.adjust(2, 2, 1)
+    # Кнопка смены региона в нижнем ряду
+    region_label = REGION_LABELS.get(current_region or "ru", "🌍 Регион")
+    builder.button(text=f"{region_label} (сменить)", callback_data="change_region")
+    builder.adjust(2, 2, 1, 1)
+    return builder.as_markup()
+
+
+def region_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора региона при старте сессии."""
+    builder = InlineKeyboardBuilder()
+    for region_code, label in REGION_LABELS.items():
+        builder.button(text=label, callback_data=f"region:{region_code}")
+    builder.adjust(2, 2)
     return builder.as_markup()
 
 

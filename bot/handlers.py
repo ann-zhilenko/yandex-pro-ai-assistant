@@ -24,6 +24,8 @@ from bot.keyboards import (
     feedback_keyboard,
     get_faq_question,
     menu_button,
+    region_keyboard,
+    REGION_LABELS,
 )
 from db.analytics import log_feedback, log_query
 from rag.classifier import classify
@@ -34,6 +36,10 @@ logger = logging.getLogger(__name__)
 
 # Ретривер — загружается один раз при старте
 _retriever: Retriever | None = None
+
+# Хранилище регионов пользователей (user_id → region_code)
+# In-memory: сбрасывается при перезапуске бота. Для продакшена — Redis/DB.
+_user_regions: dict[int, str] = {}
 
 
 async def _safe_send(
@@ -87,16 +93,46 @@ def get_retriever() -> Retriever:
 # ── /start ─────────────────────────────────────────────────────
 
 async def cmd_start(message: Message) -> None:
-    """Приветствие + меню категорий."""
+    """Приветствие + выбор региона."""
     logger.info("Команда /start от user_id=%d, username=%s", message.from_user.id, message.from_user.username)
     try:
         await message.answer(
-            formatter.format_welcome(),
-            reply_markup=category_keyboard(),
+            formatter.format_region_prompt(),
+            reply_markup=region_keyboard(),
             parse_mode="Markdown",
         )
     except TelegramNetworkError as exc:
         logger.error("Не удалось отправить приветствие: %s", exc)
+
+
+# ── Выбор региона ──────────────────────────────────────────────
+
+async def handle_region(callback: CallbackQuery) -> None:
+    """Сохраняет выбранный регион и показывает главное меню."""
+    region = callback.data.split(":", 1)[1]
+    user_id = callback.from_user.id
+    _user_regions[user_id] = region
+    logger.info("Регион '%s' выбран user_id=%d", region, user_id)
+
+    region_label = REGION_LABELS.get(region, region)
+    await callback.message.edit_text(
+        f"✅ Регион: *{region_label}*\n\n"
+        + formatter.format_welcome(region),
+        reply_markup=category_keyboard(region),
+        parse_mode="Markdown",
+    )
+    await callback.answer(f"Регион: {region_label}")
+
+
+async def handle_change_region(callback: CallbackQuery) -> None:
+    """Возврат к выбору региона."""
+    logger.info("Смена региона от user_id=%d", callback.from_user.id)
+    await callback.message.edit_text(
+        "🌍 Выберите новый регион работы:",
+        reply_markup=region_keyboard(),
+        parse_mode="Markdown",
+    )
+    await callback.answer()
 
 
 # ── Выбор категории ────────────────────────────────────────────
@@ -117,10 +153,12 @@ async def handle_category(callback: CallbackQuery) -> None:
 
 async def handle_back_to_menu(callback: CallbackQuery) -> None:
     """Возврат в главное меню."""
-    logger.info("Возврат в меню от user_id=%d", callback.from_user.id)
+    user_id = callback.from_user.id
+    region = _user_regions.get(user_id, "ru")
+    logger.info("Возврат в меню от user_id=%d (region=%s)", user_id, region)
     await callback.message.edit_text(
-        formatter.format_welcome(),
-        reply_markup=category_keyboard(),
+        formatter.format_welcome(region),
+        reply_markup=category_keyboard(region),
         parse_mode="Markdown",
     )
     await callback.answer()
@@ -156,14 +194,26 @@ async def handle_text_message(message: Message) -> None:
     if not message.text:
         return
 
+    user_id = message.from_user.id
+
+    # Если регион ещё не выбран — просим выбрать
+    if user_id not in _user_regions:
+        await _safe_send(
+            message,
+            "Сначала выберите регион работы — это поможет давать точные ответы:",
+            reply_markup=region_keyboard(),
+        )
+        return
+
     logger.info(
-        "Текст от user_id=%d (%s): \"%s\"",
-        message.from_user.id,
+        "Текст от user_id=%d (%s, region=%s): \"%s\"",
+        user_id,
         message.from_user.username or "без username",
+        _user_regions.get(user_id),
         message.text[:80],
     )
     await _send_typing(message)
-    await process_question(message, message.from_user.id, message.from_user.username, message.text)
+    await process_question(message, user_id, message.from_user.username, message.text)
 
 
 # ── Обратная связь ─────────────────────────────────────────────
@@ -200,9 +250,17 @@ async def process_question(
     # 1. Классификация — бесплатно
     features = classify(question)
     t_class = time.monotonic()
+
+    # Регион: явный из вопроса приоритетнее, иначе — регион сессии
+    if features.region is not None:
+        region = features.region
+    else:
+        region = _user_regions.get(user_id, "ru")
+
     logger.info(
-        "[user=%d] Шаг 1/4 — классификация: category=%s, driver_type=%s, region=%s (%.2fs)",
-        user_id, features.category, features.driver_type, features.region,
+        "[user=%d] Шаг 1/4 — классификация: category=%s, driver_type=%s, region=%s (session=%s) (%.2fs)",
+        user_id, features.category, features.driver_type, region,
+        _user_regions.get(user_id, "?"),
         t_class - t_start,
     )
 
@@ -212,10 +270,10 @@ async def process_question(
     async with httpx.AsyncClient(timeout=60.0) as client:
         t_search_start = time.monotonic()
         results = await retriever.search(
-            query=question,
+            query=features.clean_query,
             category=features.category,
             driver_type=features.driver_type,
-            region=features.region,
+            region=region,
             client=client,
         )
         t_search = time.monotonic()

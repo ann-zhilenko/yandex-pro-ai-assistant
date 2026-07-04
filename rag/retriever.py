@@ -114,8 +114,10 @@ class Retriever:
                 score_boost[i] *= 1.10  # +10% за совпадение типа водителя
             # Региональная фильтрация: исключаем статьи другого региона
             # Статьи без region (универсальные) показываются всегда
+            # «ru» эквивалентно None — это универсальные статьи
+            query_region = None if region in (None, "ru") else region
             article_region = meta.get("region")
-            if article_region is not None and article_region != region:
+            if article_region is not None and article_region != query_region:
                 score_boost[i] = 0.0
 
         # Применяем буст
@@ -140,5 +142,29 @@ class Retriever:
                     score=score,
                 )
             )
+
+        # Если ничего не найдено — fallback с пониженным порогом
+        if not results:
+            logger.info(
+                "Fallback: повторный поиск с порогом %.2f (было %.2f)",
+                settings.relevance_threshold * 0.7,
+                settings.relevance_threshold,
+            )
+            fallback_threshold = settings.relevance_threshold * 0.7
+            for idx in top_indices:
+                score = float(scores[idx])
+                if score < fallback_threshold:
+                    continue
+                meta = self._metadata[idx]
+                results.append(
+                    SearchResult(
+                        chunk_id=meta["chunk_id"],
+                        title=meta["title"],
+                        category=meta["category"],
+                        url=meta["url"],
+                        text=meta["text"],
+                        score=score,
+                    )
+                )
 
         return results

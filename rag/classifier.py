@@ -47,6 +47,10 @@ _DRIVER_TYPE_KEYWORDS: dict[str, list[str]] = {
 # Статьи с region=None (универсальные) показываются для всех регионов.
 
 _REGION_KEYWORDS: dict[str, list[str]] = {
+    "ru": [
+        "россия", "москва", "питер", "спб", "петербург", "рф", "россий",
+        "мск", "новосибирск", "екатеринбург", "казан", "самара",
+    ],
     "kz": [
         "казахстан", "алматы", "астана", "тенге", "мрп", "каспий",
         "иин", "эдо", "ндс", "закрывающ",
@@ -68,6 +72,7 @@ class QueryFeatures:
     driver_type: str | None   # taxi / courier
     language: str             # ru / kz / by / uz ...
     region: str | None        # kz / by / uz / None (универсальный)
+    clean_query: str          # запрос без региональных слов (для эмбеддинга)
 
 
 def _match(text: str, keywords: list[str]) -> bool:
@@ -114,9 +119,23 @@ def classify(text: str) -> QueryFeatures:
     # Регион
     region = _detect_region(text)
 
+    # Очищаем запрос от региональных слов для лучшего семантического поиска.
+    # Региональные слова («казахстан», «беларусь») уводят эмбеддинг от
+    # универсальных статей. Они нужны только для фильтрации, не для семантики.
+    clean_query = text
+    if region is not None:
+        all_region_kw = _REGION_KEYWORDS[region]
+        clean_words = []
+        for word in text.split():
+            word_lower = word.lower().strip(".,!?;:")
+            if not any(kw in word_lower for kw in all_region_kw):
+                clean_words.append(word)
+        clean_query = " ".join(clean_words) if clean_words else text
+
     return QueryFeatures(
         category=best_category,
         driver_type=driver_type,
         language=region or "ru",
         region=region,
+        clean_query=clean_query,
     )
