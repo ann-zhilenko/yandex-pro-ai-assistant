@@ -30,7 +30,7 @@ class Chunk:
     category: str
     driver_types: list[str]
     region: str | None
-    url: str
+    url_path: str
     text: str
 
 
@@ -93,7 +93,7 @@ def _build_chunks(articles: list[dict]) -> list[Chunk]:
                     category=article["category"],
                     driver_types=article.get("driver_type", []),
                     region=article.get("region"),
-                    url=article["url"],
+                    url_path=article.get("url_path", ""),
                     text=text,
                 )
             )
@@ -117,37 +117,34 @@ async def _validate_url(url: str, client: httpx.AsyncClient) -> bool:
 
 
 async def _validate_article_urls(articles: list[dict], client: httpx.AsyncClient) -> None:
-    """Валидирует URL всех статей. Битые заменяет на fallback.
+    """Валидирует URL-пути всех статей для всех регионов.
 
-    Fallback URL — главная страница раздела базы знаний (всегда существует).
-    Логирует предупреждения для каждой заменённой ссылки.
+    Если url_path не работает для региона статьи — обнуляет его
+    (runtime будет использовать fallback на главную страницу).
     """
-    # Fallback URL по регионам — проверенные рабочие страницы
-    FALLBACK_URLS = {
-        None: "https://pro.yandex.ru/ru-ru/moskva/knowledge-base/taxi",
-        "kz": "https://pro.yandex.ru/ru-ru/almaty/knowledge-base/taxi",
-        "by": "https://pro.yandex.ru/ru-ru/minsk/knowledge-base/taxi",
-        "uz": "https://pro.yandex.ru/ru-ru/tashkent/knowledge-base/taxi",
-    }
+    from rag.regions import build_url, REGION_BASE_URLS
 
     broken_count = 0
     for article in articles:
-        url = article["url"]
-        is_valid = await _validate_url(url, client)
+        url_path = article.get("url_path", "")
+        if not url_path:
+            continue
+        # Валидируем для региона статьи (или RU для универсальных)
+        region = article.get("region") or "ru"
+        full_url = build_url(url_path, region)
+        is_valid = await _validate_url(full_url, client)
         if not is_valid:
             broken_count += 1
-            region = article.get("region")
-            fallback = FALLBACK_URLS.get(region, FALLBACK_URLS[None])
             logger.warning(
-                "Битая ссылка: %s → замена на %s (статья: %s)",
-                url, fallback, article["title"],
+                "Битый url_path %s для региона %s (статья: %s) → fallback на главную",
+                url_path, region, article["title"],
             )
-            article["url"] = fallback
+            article["url_path"] = ""
 
     if broken_count:
-        logger.warning("Всего битых ссылок заменено: %d", broken_count)
+        logger.warning("Всего битых ссылок: %d (заменены на fallback)", broken_count)
     else:
-        logger.info("Все URL валидны ✅")
+        logger.info("Все URL-пути валидны ✅")
 
 
 async def index_knowledge_base() -> None:
@@ -183,7 +180,7 @@ async def index_knowledge_base() -> None:
             "category": c.category,
             "driver_types": c.driver_types,
             "region": c.region,
-            "url": c.url,
+            "url_path": c.url_path,
             "text": c.text,
         }
         for c in chunks

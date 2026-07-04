@@ -322,11 +322,11 @@ async def process_question(
         )
 
     # 5. Форматирование
-    formatted = formatter.format_answer(answer_text, results)
+    formatted = formatter.format_answer(answer_text, results, region=region)
 
     # 6. Логирование
     found_articles = [
-        {"chunk_id": r.chunk_id, "title": r.title, "url": r.url, "score": r.score}
+        {"chunk_id": r.chunk_id, "title": r.title, "url_path": r.url_path, "score": r.score}
         for r in results
     ]
     query_id = log_query(

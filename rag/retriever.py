@@ -26,7 +26,7 @@ class SearchResult:
     chunk_id: str
     title: str
     category: str
-    url: str
+    url_path: str
     text: str
     score: float          # cosine similarity (0..1)
 
@@ -137,7 +137,7 @@ class Retriever:
                     chunk_id=meta["chunk_id"],
                     title=meta["title"],
                     category=meta["category"],
-                    url=meta["url"],
+                    url_path=meta.get("url_path", ""),
                     text=meta["text"],
                     score=score,
                 )
@@ -161,7 +161,7 @@ class Retriever:
                         chunk_id=meta["chunk_id"],
                         title=meta["title"],
                         category=meta["category"],
-                        url=meta["url"],
+                        url_path=meta.get("url_path", ""),
                         text=meta["text"],
                         score=score,
                     )

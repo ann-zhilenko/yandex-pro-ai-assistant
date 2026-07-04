@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from rag.retriever import SearchResult
+from rag.regions import build_url
 
 # Эмодзи-префиксы для категорий
 CATEGORY_EMOJI: dict[str, str] = {
@@ -14,12 +15,13 @@ CATEGORY_EMOJI: dict[str, str] = {
 }
 
 
-def format_answer(answer: str, sources: list[SearchResult]) -> str:
+def format_answer(answer: str, sources: list[SearchResult], region: str | None = None) -> str:
     """Форматирует ответ LLM + добавляет ссылки на источники.
 
     Args:
         answer: текст ответа от LLM.
         sources: найденные чанки (для ссылок).
+        region: регион пользователя для построения URL.
 
     Returns:
         Готовый к отправке текст в Telegram Markdown.
@@ -30,10 +32,13 @@ def format_answer(answer: str, sources: list[SearchResult]) -> str:
     seen_urls: set[str] = set()
     source_links: list[str] = []
     for src in sources:
-        if src.url not in seen_urls:
-            seen_urls.add(src.url)
+        # Строим URL на основе региона пользователя
+        src_region = region if src.url_path else None
+        full_url = build_url(src.url_path, src_region)
+        if full_url not in seen_urls:
+            seen_urls.add(full_url)
             emoji = CATEGORY_EMOJI.get(src.category, "📄")
-            source_links.append(f"{emoji} [{src.title}]({src.url})")
+            source_links.append(f"{emoji} [{src.title}]({full_url})")
 
     if source_links:
         lines.append("\n📚 _Подробнее:_")
