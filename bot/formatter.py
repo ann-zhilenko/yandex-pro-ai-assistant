@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from rag.retriever import SearchResult
 from rag.regions import build_url
 
@@ -15,6 +17,41 @@ CATEGORY_EMOJI: dict[str, str] = {
 }
 
 
+# Символы Markdown, которые нужно экранировать в тексте LLM-ответа
+# чтобы они не ломали форматирование в Telegram
+_MD_SPECIAL: re.Pattern[str] = re.compile(r'([_*\[\]()~`>#=\-|{}.!])')
+
+
+def _escape_markdown(text: str) -> str:
+    """Экранирует Markdown-спецсимволы в тексте ответа LLM.
+
+    LLM может вернуть * для маркированных списков или _ для курсива —
+    Telegram Markdown воспримет их как форматирование и сломает вывод.
+    Экранируем всё, кроме переносов строк.
+    """
+    lines = text.split("\n")
+    escaped_lines = []
+    for line in lines:
+        # Сохраняем структуру списка, заменяя * в начале строки на •
+        stripped = line.lstrip()
+        if stripped.startswith("* ") or stripped.startswith("- "):
+            indent = line[: len(line) - len(stripped)]
+            content = stripped[2:]
+            escaped_lines.append(f"{indent}• {_escape_md(content)}")
+        elif stripped.startswith("*") or stripped.startswith("-"):
+            indent = line[: len(line) - len(stripped)]
+            content = stripped[1:].lstrip()
+            escaped_lines.append(f"{indent}• {_escape_md(content)}")
+        else:
+            escaped_lines.append(_escape_md(line))
+    return "\n".join(escaped_lines)
+
+
+def _escape_md(text: str) -> str:
+    """Экранирует одиночные Markdown-спецсимволы."""
+    return _MD_SPECIAL.sub(r"\\\1", text)
+
+
 def format_answer(answer: str, sources: list[SearchResult], region: str | None = None) -> str:
     """Форматирует ответ LLM + добавляет ссылки на источники.
 
@@ -26,7 +63,7 @@ def format_answer(answer: str, sources: list[SearchResult], region: str | None =
     Returns:
         Готовый к отправке текст в Telegram Markdown.
     """
-    lines = [answer.strip()]
+    lines = [_escape_markdown(answer.strip())]
 
     # Уникальные ссылки на статьи-источники
     seen_urls: set[str] = set()
@@ -55,7 +92,6 @@ def format_no_answer() -> str:
     return (
         "К сожалению, я не нашёл точного ответа в базе знаний. 😔\n\n"
         "Обратитесь в поддержку:\n"
-        "📩 @yandex_pro_support\n"
         "📞 8 800 333-96-39\n\n"
         "Или попробуйте переформулировать вопрос."
     )

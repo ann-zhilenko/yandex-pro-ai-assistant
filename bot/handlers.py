@@ -321,6 +321,23 @@ async def process_question(
                 user_id, len(results),
             )
 
+        # Если всё ещё ничего не найдено — ищем без регионального фильтра
+        # (по всем статьям всех регионов)
+        if not results:
+            logger.info("[user=%d] Fallback: поиск по всем регионам", user_id)
+            results = await retriever.search(
+                query=features.clean_query,
+                category=features.category,
+                driver_type=features.driver_type,
+                region=None,
+                client=client,
+            )
+            used_fallback = bool(results)
+            logger.info(
+                "[user=%d] Fallback по всем регионам: найдено %d чанков",
+                user_id, len(results),
+            )
+
         if not results:
             # Ответ не найден
             answer = formatter.format_no_answer()

@@ -114,11 +114,12 @@ def get_faq_question(category: str, idx: int) -> str | None:
 # ── Обратная связь ─────────────────────────────────────────────
 
 def feedback_keyboard(query_id: int) -> InlineKeyboardMarkup:
-    """Кнопки оценки ответа + ссылка на источник."""
+    """Кнопки оценки ответа + возврат в меню."""
     builder = InlineKeyboardBuilder()
     builder.button(text="👍 Помогло", callback_data=f"fb:{query_id}:1")
     builder.button(text="👎 Не помогло", callback_data=f"fb:{query_id}:-1")
-    builder.adjust(2)
+    builder.button(text="📋 В меню", callback_data="back_to_menu")
+    builder.adjust(2, 1)
     return builder.as_markup()
 
 
