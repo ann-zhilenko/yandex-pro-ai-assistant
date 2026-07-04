@@ -85,14 +85,8 @@ def _make_session() -> AiohttpSession:
         connect=settings.telegram_connect_timeout,
         total=settings.telegram_read_timeout,
     )
-    connector = aiohttp.TCPConnector(
-        limit=10,
-        force_close=True,
-        enable_cleanup_closed=True,
-    )
     return AiohttpSession(
         timeout=timeout,
-        json_loads=lambda x: x,  # aiogram использует свой JSON-парсер
     )
 
 
