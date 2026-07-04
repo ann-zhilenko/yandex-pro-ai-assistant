@@ -17,9 +17,9 @@ CATEGORY_EMOJI: dict[str, str] = {
 }
 
 
-# Символы Markdown, которые нужно экранировать в тексте LLM-ответа
-# чтобы они не ломали форматирование в Telegram
-_MD_SPECIAL: re.Pattern[str] = re.compile(r'([_*\[\]()~`>#=\-|{}.!])')
+# Символы Markdown, которые могут сломать форматирование Telegram.
+# Экранируем только те, что реально опасны (не точка, не воскл. знак).
+_MD_SPECIAL: re.Pattern[str] = re.compile(r'([_*\[\]\(\)~`>#\|{}=])')
 
 
 def _escape_markdown(text: str) -> str:

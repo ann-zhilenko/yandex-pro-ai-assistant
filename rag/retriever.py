@@ -113,13 +113,15 @@ class Retriever:
                 score_boost[i] *= 1.15  # +15% за совпадение категории
             if driver_type and meta["driver_types"] and driver_type in meta["driver_types"]:
                 score_boost[i] *= 1.10  # +10% за совпадение типа водителя
-            # Региональная фильтрация: исключаем статьи другого региона
-            # Статьи без region (универсальные) показываются всегда
-            # «ru» эквивалентно None — это универсальные статьи
-            query_region = None if region in (None, "ru") else region
-            article_region = meta.get("region")
-            if article_region is not None and article_region != query_region:
-                score_boost[i] = 0.0
+            # Региональная фильтрация:
+            # - region=None → без фильтра (все регионы, включая kz, by...)
+            # - region="ru" → универсальные + RU
+            # - region="kz" → универсальные + KZ
+            if region is not None:
+                query_region = None if region == "ru" else region
+                article_region = meta.get("region")
+                if article_region is not None and article_region != query_region:
+                    score_boost[i] = 0.0
 
         # Применяем буст
         scores = scores * score_boost
