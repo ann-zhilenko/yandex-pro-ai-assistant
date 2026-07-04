@@ -2,6 +2,12 @@
 
 Бесплатная альтернатива LLM-классификации: определяет категорию
 запроса, тип водителя, язык и регион — без API-вызова.
+
+Регионы определяются в два уровня:
+  1. _COUNTRY_NAMES — явные названия стран/городов («казахстан», «минск»).
+     Могут перебивать регион сессии пользователя.
+  2. _REGION_TERMS — региональные термины («эдо», «тенге», «мрп»).
+     Только контекст, НЕ перебивают регион сессии.
 """
 
 from __future__ import annotations
@@ -42,49 +48,72 @@ _DRIVER_TYPE_KEYWORDS: dict[str, list[str]] = {
     "courier": ["курьер", "доставка", "посылка", "ресторан", "магазин", "пакет", "груз"],
 }
 
-# ── Регионы: словарь ключевых слов по странам ──────────────────
-# Добавление нового региона = просто добавить запись сюда.
-# Статьи с region=None (универсальные) показываются для всех регионов.
+# ── Уровень 1: явные названия стран и городов ──────────────────
+# Только эти слова могут перебить регион сессии пользователя.
 
-_REGION_KEYWORDS: dict[str, list[str]] = {
+_COUNTRY_NAMES: dict[str, list[str]] = {
     "ru": [
-        "россия", "москва", "питер", "спб", "петербург", "рф", "россий",
+        "россия", "москва", "питер", "спб", "петербург", "рф",
         "мск", "новосибирск", "екатеринбург", "казан", "самара",
     ],
     "kz": [
-        "казахстан", "алматы", "астана", "тенге", "мрп", "каспий",
-        "иин", "эдо", "ндс", "закрывающ",
+        "казахстан", "алматы", "астана",
     ],
     "by": [
-        "беларус", "минск", "белорус", "бнс", "рб",
+        "беларус", "минск", "белорус",
     ],
     "uz": [
-        "узбекистан", "ташкент", "сум", "сўм", "узб",
+        "узбекистан", "ташкент", "узб",
     ],
     "am": [
-        "армени", "ереван", "армян", "драм",
+        "армени", "ереван", "армян",
     ],
     "md": [
         "молдов", "кишинёв", "кишинев", "молдав",
     ],
     "ge": [
-        "грузи", "тбилиси", "грузин", "лари",
+        "грузи", "тбилиси", "грузин",
     ],
     "lt": [
-        "литва", "вильнюс", "литовск", "евро",
+        "литва", "вильнюс", "литовск",
     ],
     "rs": [
-        "серби", "белград", "сербск", "динар",
+        "серби", "белград", "сербск",
     ],
     "kg": [
-        "кыргыз", "киргиз", "бишкек", "сом",
+        "кыргыз", "киргиз", "бишкек",
     ],
     "tj": [
-        "таджикистан", "душанбе", "таджикск", "сомони",
+        "таджикистан", "душанбе", "таджикск",
     ],
     "tr": [
-        "турци", "стамбул", "турецк", "лира",
+        "турци", "стамбул", "турецк",
     ],
+}
+
+# ── Уровень 2: региональные термины ────────────────────────────
+# Контекстные подсказки. НЕ перебивают регион сессии.
+# Используются для clean_query (очистки запроса).
+
+_REGION_TERMS: dict[str, list[str]] = {
+    "ru": ["россий"],
+    "kz": ["тенге", "мрп", "каспий", "иин", "эдо", "ндс", "закрывающ"],
+    "by": ["бнс", "рб"],
+    "uz": ["сум", "сўм"],
+    "am": ["драм"],
+    "md": [],
+    "ge": ["лари"],
+    "lt": ["евро"],
+    "rs": ["динар"],
+    "kg": ["сом"],
+    "tj": ["сомони"],
+    "tr": ["лира"],
+}
+
+# Объединённый словарь для обратной совместимости и clean_query
+_REGION_KEYWORDS: dict[str, list[str]] = {
+    region: _COUNTRY_NAMES.get(region, []) + _REGION_TERMS.get(region, [])
+    for region in set(list(_COUNTRY_NAMES.keys()) + list(_REGION_TERMS.keys()))
 }
 
 
@@ -92,11 +121,12 @@ _REGION_KEYWORDS: dict[str, list[str]] = {
 class QueryFeatures:
     """Результат классификации запроса."""
 
-    category: str | None      # payments / documents / app / rules / onboarding
-    driver_type: str | None   # taxi / courier
-    language: str             # ru / kz / by / uz ...
-    region: str | None        # kz / by / uz / None (универсальный)
-    clean_query: str          # запрос без региональных слов (для эмбеддинга)
+    category: str | None        # payments / documents / app / rules / onboarding
+    driver_type: str | None     # taxi / courier
+    language: str               # ru / kz / by / uz ...
+    region: str | None          # любой detected регион (страна ИЛИ термин)
+    explicit_region: str | None  # только явное название страны — перебивает сессию
+    clean_query: str            # запрос без региональных слов (для эмбеддинга)
 
 
 def _match(text: str, keywords: list[str]) -> bool:
@@ -106,13 +136,25 @@ def _match(text: str, keywords: list[str]) -> bool:
 
 
 def _detect_region(text: str) -> str | None:
-    """Определяет регион запроса по ключевым словам.
+    """Определяет регион запроса по любым ключевым словам (страны + термины).
 
-    Возвращает код региона ('kz', 'by', 'uz') или None,
-    если запрос не привязан к конкретному региону.
+    Возвращает код региона или None.
     """
     text_lower = text.lower()
     for region_code, keywords in _REGION_KEYWORDS.items():
+        if any(kw in text_lower for kw in keywords):
+            return region_code
+    return None
+
+
+def _detect_explicit_region(text: str) -> str | None:
+    """Определяет регион только по явным названиям стран/городов.
+
+    В отличие от _detect_region, региональные термины («эдо», «тенге»)
+    НЕ учитываются — только прямое упоминание страны или города.
+    """
+    text_lower = text.lower()
+    for region_code, keywords in _COUNTRY_NAMES.items():
         if any(kw in text_lower for kw in keywords):
             return region_code
     return None
@@ -140,15 +182,18 @@ def classify(text: str) -> QueryFeatures:
             driver_type = dtype
             break
 
-    # Регион
+    # Регион (любой — страна или термин)
     region = _detect_region(text)
 
-    # Очищаем запрос от региональных слов для лучшего семантического поиска.
-    # Региональные слова («казахстан», «беларусь») уводят эмбеддинг от
-    # универсальных статей. Они нужны только для фильтрации, не для семантики.
+    # Явный регион (только названия стран/городов)
+    explicit_region = _detect_explicit_region(text)
+
+    # Очищаем запрос от всех региональных слов для лучшего семантического поиска.
+    # Региональные слова уводят эмбеддинг от универсальных статей.
     clean_query = text
-    if region is not None:
-        all_region_kw = _REGION_KEYWORDS[region]
+    detected_region = region or explicit_region
+    if detected_region is not None:
+        all_region_kw = _REGION_KEYWORDS.get(detected_region, [])
         clean_words = []
         for word in text.split():
             word_lower = word.lower().strip(".,!?;:")
@@ -159,7 +204,8 @@ def classify(text: str) -> QueryFeatures:
     return QueryFeatures(
         category=best_category,
         driver_type=driver_type,
-        language=region or "ru",
+        language=detected_region or "ru",
         region=region,
+        explicit_region=explicit_region,
         clean_query=clean_query,
     )

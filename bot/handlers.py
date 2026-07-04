@@ -252,11 +252,18 @@ async def process_question(
     features = classify(question)
     t_class = time.monotonic()
 
-    # Регион: явный из вопроса приоритетнее, иначе — регион сессии
-    if features.region is not None:
-        region = features.region
+    # Регион: приоритет сессии. Перебивает только явное упоминание страны.
+    # «ЭДО» (региональный термин) НЕ перебивает сессию,
+    # но «в казахстане» (название страны) — перебивает.
+    session_region = _user_regions.get(user_id, "ru")
+    if features.explicit_region is not None and features.explicit_region != session_region:
+        region = features.explicit_region
+        logger.info(
+            "[user=%d] Явное упоминание региона %s перебивает сессию %s",
+            user_id, region, session_region,
+        )
     else:
-        region = _user_regions.get(user_id, "ru")
+        region = session_region
 
     logger.info(
         "[user=%d] Шаг 1/4 — классификация: category=%s, driver_type=%s, region=%s (session=%s) (%.2fs)",
