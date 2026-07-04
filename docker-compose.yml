@@ -1,0 +1,14 @@
+services:
+  bot:
+    build: .
+    container_name: yandex-pro-assistant
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - FORCE_REINDEX=false
+    volumes:
+      - bot_data:/app/data
+
+volumes:
+  bot_data:

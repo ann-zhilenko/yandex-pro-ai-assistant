@@ -1,0 +1,11 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+data/vector_store/
+data/analytics.db
+.idea/
+.veai/
+.git/
+*.md
+task.md
