@@ -30,6 +30,14 @@ REGION_LABELS: dict[str, str] = {
     "kz": "🇰🇿 Казахстан",
     "by": "🇧🇾 Беларусь",
     "uz": "🇺🇿 Узбекистан",
+    "am": "🇦🇲 Армения",
+    "md": "🇲🇩 Молдова",
+    "ge": "🇬🇪 Грузия",
+    "lt": "🇱🇹 Литва",
+    "rs": "🇷🇸 Сербия",
+    "kg": "🇰🇬 Кыргызстан",
+    "tj": "🇹🇯 Таджикистан",
+    "tr": "🇹🇷 Турция",
 }
 
 # ── Частые вопросы по категории ────────────────────────────────
@@ -78,7 +86,7 @@ def region_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for region_code, label in REGION_LABELS.items():
         builder.button(text=label, callback_data=f"region:{region_code}")
-    builder.adjust(2, 2)
+    builder.adjust(3, 3, 3, 3)
     return builder.as_markup()
 
 

@@ -125,9 +125,10 @@ async def _validate_article_urls(articles: list[dict], client: httpx.AsyncClient
     Если url_path не работает ни для одного региона — обнуляет его.
     Логирует детальную сводку: какие url_path работают для каких регионов.
     """
-    from rag.regions import build_url, REGION_BASE_URLS
+    from rag.regions import build_url, REGION_BASE_URLS, REGIONS_WITH_KB
 
-    all_regions = list(REGION_BASE_URLS.keys())
+    # Проверяем только регионы с собственной базой знаний
+    all_regions = sorted(REGIONS_WITH_KB)
     broken_count = 0
 
     for article in articles:

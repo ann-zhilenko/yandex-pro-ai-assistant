@@ -30,6 +30,7 @@ from bot.keyboards import (
 from db.analytics import log_feedback, log_query
 from rag.classifier import classify
 from rag.llm import generate_answer
+from rag.regions import has_own_kb
 from rag.retriever import Retriever
 
 logger = logging.getLogger(__name__)
@@ -269,11 +270,20 @@ async def process_question(
     # 2. Векторный поиск + 3. LLM-генерация — в одной HTTP-сессии
     async with httpx.AsyncClient(timeout=60.0) as client:
         t_search_start = time.monotonic()
+
+        # Если у региона нет собственной базы знаний — ищем по РФ
+        search_region = region if has_own_kb(region) else "ru"
+        if region != search_region:
+            logger.info(
+                "[user=%d] Регион %s не имеет собственной БЗ, поиск по %s",
+                user_id, region, search_region,
+            )
+
         results = await retriever.search(
             query=features.clean_query,
             category=features.category,
             driver_type=features.driver_type,
-            region=region,
+            region=search_region,
             client=client,
         )
         t_search = time.monotonic()
@@ -286,6 +296,23 @@ async def process_question(
                 logger.info(
                     "  → [%.3f] %s", r.score, r.title,
                 )
+
+        # Если ничего не найдено и регион не РФ — пробуем fallback на РФ
+        used_fallback = False
+        if not results and search_region != "ru":
+            logger.info("[user=%d] Fallback: повторный поиск по РФ", user_id)
+            results = await retriever.search(
+                query=features.clean_query,
+                category=features.category,
+                driver_type=features.driver_type,
+                region="ru",
+                client=client,
+            )
+            used_fallback = bool(results)
+            logger.info(
+                "[user=%d] Fallback по РФ: найдено %d чанков",
+                user_id, len(results),
+            )
 
         if not results:
             # Ответ не найден
@@ -321,8 +348,17 @@ async def process_question(
             user_id, t_llm - t_llm_start, answer_text[:100].replace("\n", " "),
         )
 
-    # 5. Форматирование
-    formatted = formatter.format_answer(answer_text, results, region=region)
+    # 5. Форматирование (+ пометка о fallback если искали по РФ)
+    formatted = formatter.format_answer(answer_text, results, region=search_region)
+
+    # Добавляем помку о fallback на РФ
+    if used_fallback or (region != "ru" and not has_own_kb(region)):
+        region_label = REGION_LABELS.get(region, region)
+        formatted = (
+            f"ℹ️ _Для региона {region_label} нет отдельной базы знаний. "
+            f"Ответ основан на общей базе (РФ)._\n\n"
+            + formatted
+        )
 
     # 6. Логирование
     found_articles = [
