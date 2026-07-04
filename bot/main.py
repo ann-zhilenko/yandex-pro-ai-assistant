@@ -80,13 +80,12 @@ async def _check_connectivity(bot: Bot) -> bool:
 
 
 def _make_session() -> AiohttpSession:
-    """Создаёт aiohttp-сессию с увеличенными таймаутами."""
-    timeout = aiohttp.ClientTimeout(
-        connect=settings.telegram_connect_timeout,
-        total=settings.telegram_read_timeout,
-    )
+    """Создаёт aiohttp-сессию с увеличенным таймаутом.
+
+    aiogram ожидает timeout как число (секунды), не ClientTimeout.
+    """
     return AiohttpSession(
-        timeout=timeout,
+        timeout=settings.telegram_read_timeout,
     )
 
 
