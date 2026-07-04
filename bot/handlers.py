@@ -14,7 +14,7 @@ import logging
 import time
 
 import httpx
-from aiogram.exceptions import TelegramNetworkError
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.types import CallbackQuery, Message
 
 from bot import formatter
@@ -34,6 +34,34 @@ logger = logging.getLogger(__name__)
 
 # Ретривер — загружается один раз при старте
 _retriever: Retriever | None = None
+
+
+async def _safe_send(
+    message: Message,
+    text: str,
+    reply_markup=None,
+    parse_mode: str = "Markdown",
+) -> None:
+    """Отправляет сообщение с fallback на plain text при ошибке Markdown.
+
+    LLM может вернуть текст с незакрытыми _ * [ — Telegram выбросит
+    TelegramBadRequest. В этом случае отправляем без форматирования.
+    """
+    try:
+        await message.answer(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=True,
+        )
+    except TelegramBadRequest:
+        logger.warning("Markdown не парсится, отправляю plain text")
+        await message.answer(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=None,
+            disable_web_page_preview=True,
+        )
 
 
 def get_retriever() -> Retriever:
@@ -202,11 +230,7 @@ async def process_question(
                 user_id, query_id,
             )
             try:
-                await message.answer(
-                    answer,
-                    reply_markup=menu_button(),
-                    parse_mode="Markdown",
-                )
+                await _safe_send(message, answer, reply_markup=menu_button())
             except TelegramNetworkError as exc:
                 logger.error("[user=%d] Не удалось отправить ответ: %s", user_id, exc)
             return
@@ -244,12 +268,7 @@ async def process_question(
     # 7. Отправка
     t_send_start = time.monotonic()
     try:
-        await message.answer(
-            formatted,
-            reply_markup=feedback_keyboard(query_id),
-            parse_mode="Markdown",
-            disable_web_page_preview=True,
-        )
+        await _safe_send(message, formatted, reply_markup=feedback_keyboard(query_id))
         t_end = time.monotonic()
         logger.info(
             "[user=%d] Шаг 4/4 — ответ отправлен (%.2fs). Итого: %.2fs",

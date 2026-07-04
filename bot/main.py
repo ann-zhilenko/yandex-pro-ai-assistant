@@ -15,7 +15,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
-from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
+from aiogram.exceptions import TelegramNetworkError
 
 from bot.handlers import (
     cmd_start,
@@ -131,20 +131,29 @@ async def main() -> None:
             logger.warning("Не удалось удалить webhook (попытка %d): %s", attempt + 1, exc)
             await asyncio.sleep(5)
 
-    # Polling с обработкой сетевых ошибок
+    # Polling с retry-циклом при сетевых ошибках
     logger.info("🚀 Polling запущен")
-    try:
-        await dp.start_polling(
-            bot,
-            handle_as_tasks=False,  # обрабатываем запросы последовательно
-            backoff_on_exception=(TelegramNetworkError, asyncio.TimeoutError),
-        )
-    except (TelegramNetworkError, asyncio.TimeoutError) as exc:
-        logger.error("Сетевая ошибка во время polling: %s. Перезапуск через 10s...", exc)
-        await asyncio.sleep(10)
-    finally:
-        await session.close()
-        logger.info("Сессия закрыта")
+    while True:
+        try:
+            await dp.start_polling(
+                bot,
+                handle_as_tasks=True,  # параллельная обработка запросов
+            )
+        except (TelegramNetworkError, asyncio.TimeoutError, aiohttp.ClientError) as exc:
+            logger.error("Сетевая ошибка во время polling: %s. Перезапуск через 10s...", exc)
+            await asyncio.sleep(10)
+        except Exception as exc:
+            logger.error("Непредвиденная ошибка во время polling: %s. Перезапуск через 10s...", exc)
+            await asyncio.sleep(10)
+        else:
+            # start_polling завершился без ошибки — выходим из цикла
+            break
+        finally:
+            # Сессию не закрываем при retry — она нужна для следующей итерации
+            pass
+
+    await session.close()
+    logger.info("Сессия закрыта")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ services:
       - .env
     environment:
       - FORCE_REINDEX=false
+      - KB_PATH=knowledge_base.json
     volumes:
       - bot_data:/app/data
 

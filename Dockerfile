@@ -23,7 +23,12 @@ COPY bot/ ./bot/
 COPY rag/ ./rag/
 COPY db/ ./db/
 COPY config.py ./
-COPY data/knowledge_base.json ./data/
+
+# База знаний — ВНЕ тома, чтобы не перекрывалась при пересборке образа
+COPY data/knowledge_base.json ./knowledge_base.json
+
+# Директория для персистентных данных (создаётся томом)
+RUN mkdir -p /app/data
 
 # Entrypoint-скрипт: индексация (при необходимости) + запуск бота
 COPY entrypoint.sh ./
