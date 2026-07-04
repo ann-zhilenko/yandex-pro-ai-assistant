@@ -307,7 +307,7 @@ async def process_question(
 
         # 3. Контекст для LLM из найденных чанков
         context = "\n\n---\n\n".join(
-            f"[{r.title}] URL: {r.url}\n{r.text}"
+            f"[{r.title}]\n{r.text}"
             for r in results
         )
 

@@ -32,9 +32,12 @@ def format_answer(answer: str, sources: list[SearchResult], region: str | None =
     seen_urls: set[str] = set()
     source_links: list[str] = []
     for src in sources:
-        # Строим URL на основе региона пользователя
-        src_region = region if src.url_path else None
-        full_url = build_url(src.url_path, src_region)
+        # Если url_path не работает для региона пользователя — fallback на главную
+        user_region = region or "ru"
+        if src.url_path and src.valid_regions and user_region not in src.valid_regions:
+            full_url = build_url(None, user_region)
+        else:
+            full_url = build_url(src.url_path, user_region)
         if full_url not in seen_urls:
             seen_urls.add(full_url)
             emoji = CATEGORY_EMOJI.get(src.category, "📄")

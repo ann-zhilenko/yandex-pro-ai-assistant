@@ -27,6 +27,7 @@ class SearchResult:
     title: str
     category: str
     url_path: str
+    valid_regions: list[str]
     text: str
     score: float          # cosine similarity (0..1)
 
@@ -138,6 +139,7 @@ class Retriever:
                     title=meta["title"],
                     category=meta["category"],
                     url_path=meta.get("url_path", ""),
+                    valid_regions=meta.get("valid_regions", []),
                     text=meta["text"],
                     score=score,
                 )
@@ -162,6 +164,7 @@ class Retriever:
                         title=meta["title"],
                         category=meta["category"],
                         url_path=meta.get("url_path", ""),
+                        valid_regions=meta.get("valid_regions", []),
                         text=meta["text"],
                         score=score,
                     )

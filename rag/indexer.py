@@ -31,6 +31,7 @@ class Chunk:
     driver_types: list[str]
     region: str | None
     url_path: str
+    valid_regions: list[str]
     text: str
 
 
@@ -94,6 +95,7 @@ def _build_chunks(articles: list[dict]) -> list[Chunk]:
                     driver_types=article.get("driver_type", []),
                     region=article.get("region"),
                     url_path=article.get("url_path", ""),
+                    valid_regions=article.get("valid_regions", []),
                     text=text,
                 )
             )
@@ -119,32 +121,53 @@ async def _validate_url(url: str, client: httpx.AsyncClient) -> bool:
 async def _validate_article_urls(articles: list[dict], client: httpx.AsyncClient) -> None:
     """Валидирует URL-пути всех статей для всех регионов.
 
-    Если url_path не работает для региона статьи — обнуляет его
-    (runtime будет использовать fallback на главную страницу).
+    Для каждой статьи проверяет url_path против каждого региона.
+    Если url_path не работает ни для одного региона — обнуляет его.
+    Логирует детальную сводку: какие url_path работают для каких регионов.
     """
     from rag.regions import build_url, REGION_BASE_URLS
 
+    all_regions = list(REGION_BASE_URLS.keys())
     broken_count = 0
+
     for article in articles:
         url_path = article.get("url_path", "")
         if not url_path:
+            article["valid_regions"] = all_regions
             continue
-        # Валидируем для региона статьи (или RU для универсальных)
-        region = article.get("region") or "ru"
-        full_url = build_url(url_path, region)
-        is_valid = await _validate_url(full_url, client)
-        if not is_valid:
+
+        # Проверяем url_path для всех регионов
+        valid_regions: list[str] = []
+        invalid_regions: list[str] = []
+        for region_code in all_regions:
+            full_url = build_url(url_path, region_code)
+            is_valid = await _validate_url(full_url, client)
+            if is_valid:
+                valid_regions.append(region_code)
+            else:
+                invalid_regions.append(region_code)
+
+        article["valid_regions"] = valid_regions
+
+        if invalid_regions:
+            logger.warning(
+                "url_path %s НЕ работает для регионов: %s (статья: %s)",
+                url_path, ", ".join(invalid_regions), article["title"],
+            )
+
+        if not valid_regions:
             broken_count += 1
             logger.warning(
-                "Битый url_path %s для региона %s (статья: %s) → fallback на главную",
-                url_path, region, article["title"],
+                "url_path %s битый для ВСЕХ регионов → fallback (статья: %s)",
+                url_path, article["title"],
             )
             article["url_path"] = ""
+            article["valid_regions"] = all_regions
 
     if broken_count:
-        logger.warning("Всего битых ссылок: %d (заменены на fallback)", broken_count)
+        logger.warning("Статей с полностью битыми ссылками: %d", broken_count)
     else:
-        logger.info("Все URL-пути валидны ✅")
+        logger.info("Все URL-пути валидны хотя бы для одного региона ✅")
 
 
 async def index_knowledge_base() -> None:
@@ -181,6 +204,7 @@ async def index_knowledge_base() -> None:
             "driver_types": c.driver_types,
             "region": c.region,
             "url_path": c.url_path,
+            "valid_regions": c.valid_regions,
             "text": c.text,
         }
         for c in chunks
