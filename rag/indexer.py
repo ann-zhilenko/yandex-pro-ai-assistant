@@ -100,19 +100,72 @@ def _build_chunks(articles: list[dict]) -> list[Chunk]:
     return chunks
 
 
+async def _validate_url(url: str, client: httpx.AsyncClient) -> bool:
+    """Проверяет, что URL возвращает HTTP 200 (не 404).
+
+    Используется при индексации, чтобы отсеять битые ссылки
+    до того, как они попадут к пользователю.
+    """
+    try:
+        resp = await client.head(url, follow_redirects=True, timeout=10.0)
+        # Некоторые серверы не поддерживают HEAD — пробуем GET
+        if resp.status_code == 405:
+            resp = await client.get(url, follow_redirects=True, timeout=10.0)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+async def _validate_article_urls(articles: list[dict], client: httpx.AsyncClient) -> None:
+    """Валидирует URL всех статей. Битые заменяет на fallback.
+
+    Fallback URL — главная страница раздела базы знаний (всегда существует).
+    Логирует предупреждения для каждой заменённой ссылки.
+    """
+    # Fallback URL по регионам — проверенные рабочие страницы
+    FALLBACK_URLS = {
+        None: "https://pro.yandex.ru/ru-ru/moskva/knowledge-base/taxi",
+        "kz": "https://pro.yandex.ru/ru-ru/almaty/knowledge-base/taxi",
+        "by": "https://pro.yandex.ru/ru-ru/minsk/knowledge-base/taxi",
+        "uz": "https://pro.yandex.ru/ru-ru/tashkent/knowledge-base/taxi",
+    }
+
+    broken_count = 0
+    for article in articles:
+        url = article["url"]
+        is_valid = await _validate_url(url, client)
+        if not is_valid:
+            broken_count += 1
+            region = article.get("region")
+            fallback = FALLBACK_URLS.get(region, FALLBACK_URLS[None])
+            logger.warning(
+                "Битая ссылка: %s → замена на %s (статья: %s)",
+                url, fallback, article["title"],
+            )
+            article["url"] = fallback
+
+    if broken_count:
+        logger.warning("Всего битых ссылок заменено: %d", broken_count)
+    else:
+        logger.info("Все URL валидны ✅")
+
+
 async def index_knowledge_base() -> None:
-    """Полная индексация базы знаний: загрузка → чанки → эмбеддинги → сохранение."""
+    """Полная индексация базы знаний: загрузка → валидация URL → чанки → эмбеддинги → сохранение."""
     logger.info("Загрузка базы знаний из %s", settings.kb_file)
     articles = _load_knowledge_base()
     logger.info("Загружено статей: %d", len(articles))
 
-    chunks = _build_chunks(articles)
-    logger.info("Создано чанков: %d", len(chunks))
-
-    logger.info("Получение эмбеддингов (модель: %s)...", settings.embedding_model_doc)
-    texts = [c.text for c in chunks]
-
     async with httpx.AsyncClient(timeout=60.0) as client:
+        # Валидация URL до индексации
+        logger.info("Валидация URL статей...")
+        await _validate_article_urls(articles, client)
+
+        chunks = _build_chunks(articles)
+        logger.info("Создано чанков: %d", len(chunks))
+
+        logger.info("Получение эмбеддингов (модель: %s)...", settings.embedding_model_doc)
+        texts = [c.text for c in chunks]
         embeddings = await get_embeddings_batch(texts, settings.embedding_model_doc, client)
 
     # Сохраняем матрицу эмбеддингов
