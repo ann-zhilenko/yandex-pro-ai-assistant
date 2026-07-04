@@ -26,6 +26,7 @@ class SearchResult:
     chunk_id: str
     title: str
     category: str
+    region: str | None    # регион статьи (kz, by, ...) или None (универсальная)
     url_path: str
     valid_regions: list[str]
     text: str
@@ -140,6 +141,7 @@ class Retriever:
                     chunk_id=meta["chunk_id"],
                     title=meta["title"],
                     category=meta["category"],
+                    region=meta.get("region"),
                     url_path=meta.get("url_path", ""),
                     valid_regions=meta.get("valid_regions", []),
                     text=meta["text"],
@@ -165,6 +167,7 @@ class Retriever:
                         chunk_id=meta["chunk_id"],
                         title=meta["title"],
                         category=meta["category"],
+                        region=meta.get("region"),
                         url_path=meta.get("url_path", ""),
                         valid_regions=meta.get("valid_regions", []),
                         text=meta["text"],

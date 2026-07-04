@@ -278,14 +278,8 @@ async def process_question(
     async with httpx.AsyncClient(timeout=60.0) as client:
         t_search_start = time.monotonic()
 
-        # Если у региона нет собственной базы знаний — ищем по РФ
+        # Поиск по региону пользователя (если нет своей БЗ — сразу по РФ)
         search_region = region if has_own_kb(region) else "ru"
-        if region != search_region:
-            logger.info(
-                "[user=%d] Регион %s не имеет собственной БЗ, поиск по %s",
-                user_id, region, search_region,
-            )
-
         results = await retriever.search(
             query=features.clean_query,
             category=features.category,
@@ -298,16 +292,13 @@ async def process_question(
             "[user=%d] Шаг 2/4 — векторный поиск: найдено %d чанков (%.2fs)",
             user_id, len(results), t_search - t_search_start,
         )
-        if results:
-            for r in results:
-                logger.info(
-                    "  → [%.3f] %s", r.score, r.title,
-                )
+        for r in results:
+            logger.info("  → [%.3f] %s", r.score, r.title)
 
-        # Если ничего не найдено и регион не РФ — пробуем fallback на РФ
-        used_fallback = False
-        if not results and search_region != "ru":
-            logger.info("[user=%d] Fallback: повторный поиск по РФ", user_id)
+        # Fallback: если не найдено и регион не РФ — ищем по РФ
+        is_rf_fallback = False
+        if not results and region != "ru":
+            logger.info("[user=%d] Fallback: поиск по РФ", user_id)
             results = await retriever.search(
                 query=features.clean_query,
                 category=features.category,
@@ -315,31 +306,13 @@ async def process_question(
                 region="ru",
                 client=client,
             )
-            used_fallback = bool(results)
+            is_rf_fallback = bool(results)
             logger.info(
                 "[user=%d] Fallback по РФ: найдено %d чанков",
                 user_id, len(results),
             )
 
-        # Если всё ещё ничего не найдено — ищем без регионального фильтра
-        # (по всем статьям всех регионов)
         if not results:
-            logger.info("[user=%d] Fallback: поиск по всем регионам", user_id)
-            results = await retriever.search(
-                query=features.clean_query,
-                category=features.category,
-                driver_type=features.driver_type,
-                region=None,
-                client=client,
-            )
-            used_fallback = bool(results)
-            logger.info(
-                "[user=%d] Fallback по всем регионам: найдено %d чанков",
-                user_id, len(results),
-            )
-
-        if not results:
-            # Ответ не найден
             answer = formatter.format_no_answer()
             query_id = log_query(
                 user_id, username, question,
@@ -347,7 +320,7 @@ async def process_question(
                 [], answer,
             )
             logger.warning(
-                "[user=%d] Ответ не найден в базе знаний. Запрос залогирован #%d",
+                "[user=%d] Ответ не найден. Запрос залогирован #%d",
                 user_id, query_id,
             )
             try:
@@ -372,15 +345,22 @@ async def process_question(
             user_id, t_llm - t_llm_start, answer_text[:100].replace("\n", " "),
         )
 
-    # 5. Форматирование (+ пометка о fallback если искали по РФ)
+    # 5. Форматирование
     formatted = formatter.format_answer(answer_text, results, region=search_region)
 
-    # Добавляем помку о fallback на РФ
-    if used_fallback or (region != "ru" and not has_own_kb(region)):
+    # Пометка для ответов из РФ-fallback
+    if is_rf_fallback:
+        region_label = REGION_LABELS.get(region, region)
+        formatted = (
+            f"ℹ️ _Для региона {region_label} ответ не найден. "
+            f"Показан ответ для РФ._\n\n"
+            + formatted
+        )
+    elif region != "ru" and not has_own_kb(region):
         region_label = REGION_LABELS.get(region, region)
         formatted = (
             f"ℹ️ _Для региона {region_label} нет отдельной базы знаний. "
-            f"Ответ основан на общей базе (РФ)._\n\n"
+            f"Ответ основан на РФ._\n\n"
             + formatted
         )
 
