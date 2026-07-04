@@ -21,6 +21,11 @@ class Settings(BaseSettings):
 
     # ── Telegram ──────────────────────────────────────────────
     bot_token: str = ""
+    # Таймауты Telegram API (сек). На серверах с плохой связью — увеличить.
+    telegram_connect_timeout: int = 30
+    telegram_read_timeout: int = 60
+    # Макс. попыток переподключения при сетевых ошибках
+    telegram_retry_attempts: int = 5
 
     # ── Yandex AI Studio ──────────────────────────────────────
     yandex_api_key: str = ""

@@ -1,4 +1,8 @@
-"""Inline-клавиатуры для Telegram-бота: меню категорий и обратная связь."""
+"""Inline-клавиатуры для Telegram-бота: меню категорий и обратная связь.
+
+callback_data ограничен 64 байтами (UTF-8), поэтому для FAQ-кнопок
+используем короткие индексы: faq:{category}:{idx} вместо полного текста.
+"""
 
 from __future__ import annotations
 
@@ -14,16 +18,6 @@ CATEGORY_LABELS: dict[str, str] = {
     "rules": "⚖️ Правила и рейтинг",
     "onboarding": "🚀 Как начать",
 }
-
-
-def category_keyboard() -> InlineKeyboardMarkup:
-    """Главное меню с кнопками-категориями."""
-    builder = InlineKeyboardBuilder()
-    for cat_id, label in CATEGORY_LABELS.items():
-        builder.button(text=label, callback_data=f"cat:{cat_id}")
-    builder.adjust(2, 2, 1)
-    return builder.as_markup()
-
 
 # ── Частые вопросы по категории ────────────────────────────────
 
@@ -53,14 +47,34 @@ FAQ_QUESTIONS: dict[str, list[str]] = {
 }
 
 
-def faq_keyboard(category: str) -> InlineKeyboardMarkup:
-    """Кнопки с частыми вопросами по выбранной категории."""
+def category_keyboard() -> InlineKeyboardMarkup:
+    """Главное меню с кнопками-категориями."""
     builder = InlineKeyboardBuilder()
-    for question in FAQ_QUESTIONS.get(category, []):
-        builder.button(text=question, callback_data=f"faq:{question[:60]}")
+    for cat_id, label in CATEGORY_LABELS.items():
+        builder.button(text=label, callback_data=f"cat:{cat_id}")
+    builder.adjust(2, 2, 1)
+    return builder.as_markup()
+
+
+def faq_keyboard(category: str) -> InlineKeyboardMarkup:
+    """Кнопки с частыми вопросами по выбранной категории.
+
+    callback_data формат: faq:{category}:{idx} — короткий, до 64 байт.
+    """
+    builder = InlineKeyboardBuilder()
+    for idx, question in enumerate(FAQ_QUESTIONS.get(category, [])):
+        builder.button(text=question, callback_data=f"faq:{category}:{idx}")
     builder.button(text="⬅️ Назад", callback_data="back_to_menu")
     builder.adjust(1)
     return builder.as_markup()
+
+
+def get_faq_question(category: str, idx: int) -> str | None:
+    """Возвращает текст FAQ-вопроса по категории и индексу."""
+    questions = FAQ_QUESTIONS.get(category, [])
+    if 0 <= idx < len(questions):
+        return questions[idx]
+    return None
 
 
 # ── Обратная связь ─────────────────────────────────────────────

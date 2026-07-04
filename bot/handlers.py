@@ -11,8 +11,10 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import httpx
+from aiogram.exceptions import TelegramNetworkError
 from aiogram.types import CallbackQuery, Message
 
 from bot import formatter
@@ -20,6 +22,7 @@ from bot.keyboards import (
     category_keyboard,
     faq_keyboard,
     feedback_keyboard,
+    get_faq_question,
     menu_button,
 )
 from db.analytics import log_feedback, log_query
@@ -46,11 +49,15 @@ def get_retriever() -> Retriever:
 
 async def cmd_start(message: Message) -> None:
     """Приветствие + меню категорий."""
-    await message.answer(
-        formatter.format_welcome(),
-        reply_markup=category_keyboard(),
-        parse_mode="Markdown",
-    )
+    logger.info("Команда /start от user_id=%d, username=%s", message.from_user.id, message.from_user.username)
+    try:
+        await message.answer(
+            formatter.format_welcome(),
+            reply_markup=category_keyboard(),
+            parse_mode="Markdown",
+        )
+    except TelegramNetworkError as exc:
+        logger.error("Не удалось отправить приветствие: %s", exc)
 
 
 # ── Выбор категории ────────────────────────────────────────────
@@ -58,6 +65,7 @@ async def cmd_start(message: Message) -> None:
 async def handle_category(callback: CallbackQuery) -> None:
     """Показывает частые вопросы по выбранной категории."""
     category = callback.data.split(":", 1)[1]
+    logger.info("Категория '%s' от user_id=%d", category, callback.from_user.id)
     await callback.message.edit_text(
         formatter.format_category_menu(category),
         reply_markup=faq_keyboard(category),
@@ -70,6 +78,7 @@ async def handle_category(callback: CallbackQuery) -> None:
 
 async def handle_back_to_menu(callback: CallbackQuery) -> None:
     """Возврат в главное меню."""
+    logger.info("Возврат в меню от user_id=%d", callback.from_user.id)
     await callback.message.edit_text(
         formatter.format_welcome(),
         reply_markup=category_keyboard(),
@@ -81,8 +90,21 @@ async def handle_back_to_menu(callback: CallbackQuery) -> None:
 # ── Частый вопрос (из кнопки) ──────────────────────────────────
 
 async def handle_faq_question(callback: CallbackQuery) -> None:
-    """Обрабатывает выбор частого вопроса из меню категории."""
-    question = callback.data.split(":", 1)[1]
+    """Обрабатывает выбор частого вопроса из меню категории.
+
+    callback_data формат: faq:{category}:{idx}
+    """
+    parts = callback.data.split(":")
+    category = parts[1]
+    idx = int(parts[2])
+    question = get_faq_question(category, idx)
+
+    if question is None:
+        logger.warning("FAQ-вопрос не найден: cat=%s idx=%d", category, idx)
+        await callback.answer("Вопрос не найден")
+        return
+
+    logger.info("FAQ-вопрос '%s' от user_id=%d", question, callback.from_user.id)
     await callback.message.edit_text(f"🔍 Ищу ответ на: _{question}_", parse_mode="Markdown")
     await process_question(callback.message, callback.from_user.id, callback.from_user.username, question)
     await callback.answer()
@@ -95,6 +117,12 @@ async def handle_text_message(message: Message) -> None:
     if not message.text:
         return
 
+    logger.info(
+        "Текст от user_id=%d (%s): \"%s\"",
+        message.from_user.id,
+        message.from_user.username or "без username",
+        message.text[:80],
+    )
     await message.chat.do_action("typing")
     await process_question(message, message.from_user.id, message.from_user.username, message.text)
 
@@ -107,6 +135,7 @@ async def handle_feedback(callback: CallbackQuery) -> None:
     query_id = int(parts[1])
     feedback = int(parts[2])
     log_feedback(query_id, feedback)
+    logger.info("Обратная связь: query #%d → %s", query_id, "👍" if feedback > 0 else "👎")
 
     if feedback > 0:
         await callback.answer("Спасибо за отзыв! 🙏")
@@ -118,32 +147,47 @@ async def handle_feedback(callback: CallbackQuery) -> None:
 # ── Ядро RAG-пайплайна ─────────────────────────────────────────
 
 async def process_question(
-        message: Message,
-        user_id: int,
-        username: str | None,
-        question: str,
+    message: Message,
+    user_id: int,
+    username: str | None,
+    question: str,
 ) -> None:
     """Полный RAG-пайплайн: классификация → поиск → LLM → ответ.
 
     Ровно один LLM-вызов на запрос (для минимальной стоимости API).
     """
+    t_start = time.monotonic()
+
     # 1. Классификация — бесплатно
     features = classify(question)
+    t_class = time.monotonic()
     logger.info(
-        "Запрос от %s: category=%s, driver_type=%s, kz=%s",
+        "[user=%d] Шаг 1/4 — классификация: category=%s, driver_type=%s, kz=%s (%.2fs)",
         user_id, features.category, features.driver_type, features.is_kz_context,
+        t_class - t_start,
     )
 
     retriever = get_retriever()
 
-    # 2. Векторный поиск
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # 2. Векторный поиск + 3. LLM-генерация — в одной HTTP-сессии
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        t_search_start = time.monotonic()
         results = await retriever.search(
             query=question,
             category=features.category,
             driver_type=features.driver_type,
             client=client,
         )
+        t_search = time.monotonic()
+        logger.info(
+            "[user=%d] Шаг 2/4 — векторный поиск: найдено %d чанков (%.2fs)",
+            user_id, len(results), t_search - t_search_start,
+        )
+        if results:
+            for r in results:
+                logger.info(
+                    "  → [%.3f] %s", r.score, r.title,
+                )
 
         if not results:
             # Ответ не найден
@@ -153,11 +197,18 @@ async def process_question(
                 features.category, features.driver_type,
                 [], answer,
             )
-            await message.answer(
-                answer,
-                reply_markup=menu_button(),
-                parse_mode="Markdown",
+            logger.warning(
+                "[user=%d] Ответ не найден в базе знаний. Запрос залогирован #%d",
+                user_id, query_id,
             )
+            try:
+                await message.answer(
+                    answer,
+                    reply_markup=menu_button(),
+                    parse_mode="Markdown",
+                )
+            except TelegramNetworkError as exc:
+                logger.error("[user=%d] Не удалось отправить ответ: %s", user_id, exc)
             return
 
         # 3. Контекст для LLM из найденных чанков
@@ -167,7 +218,14 @@ async def process_question(
         )
 
         # 4. LLM-генерация (1 API-вызов)
+        t_llm_start = time.monotonic()
+        await message.chat.do_action("typing")
         answer_text = await generate_answer(question, context, client=client)
+        t_llm = time.monotonic()
+        logger.info(
+            "[user=%d] Шаг 3/4 — LLM генерация (%.2fs): %s",
+            user_id, t_llm - t_llm_start, answer_text[:100].replace("\n", " "),
+        )
 
     # 5. Форматирование
     formatted = formatter.format_answer(answer_text, results)
@@ -184,9 +242,18 @@ async def process_question(
     )
 
     # 7. Отправка
-    await message.answer(
-        formatted,
-        reply_markup=feedback_keyboard(query_id),
-        parse_mode="Markdown",
-        disable_web_page_preview=True,
-    )
+    t_send_start = time.monotonic()
+    try:
+        await message.answer(
+            formatted,
+            reply_markup=feedback_keyboard(query_id),
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
+        t_end = time.monotonic()
+        logger.info(
+            "[user=%d] Шаг 4/4 — ответ отправлен (%.2fs). Итого: %.2fs",
+            user_id, t_end - t_send_start, t_end - t_start,
+        )
+    except TelegramNetworkError as exc:
+        logger.error("[user=%d] Не удалось отправить ответ: %s", user_id, exc)

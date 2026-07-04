@@ -9,10 +9,13 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import aiohttp
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
+from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
 
 from bot.handlers import (
     cmd_start,
@@ -45,6 +48,54 @@ def register_handlers(dp: Dispatcher) -> None:
     dp.message.register(handle_text_message, F.text)
 
 
+async def _check_connectivity(bot: Bot) -> bool:
+    """Проверяет доступность Telegram API перед запуском polling.
+
+    Делает несколько попыток с задержкой — помогает на серверах
+    с нестабильной связью (например, в РФ, где Telegram может быть недоступен).
+    """
+    for attempt in range(1, settings.telegram_retry_attempts + 1):
+        try:
+            me = await bot.get_me()
+            logger.info(
+                "✅ Telegram API доступен. Бот: @%s (%s)",
+                me.username, me.first_name,
+            )
+            return True
+        except (TelegramNetworkError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            wait = 5 * attempt
+            logger.warning(
+                "⚠️ Попытка %d/%d — нет связи с Telegram API: %s. Жду %ds...",
+                attempt, settings.telegram_retry_attempts, exc, wait,
+            )
+            await asyncio.sleep(wait)
+
+    logger.error(
+        "❌ Не удалось подключиться к Telegram API за %d попыток. "
+        "Возможные причины: блокировка api.telegram.org на сервере, "
+        "отсутствие интернета, неверный BOT_TOKEN.",
+        settings.telegram_retry_attempts,
+    )
+    return False
+
+
+def _make_session() -> AiohttpSession:
+    """Создаёт aiohttp-сессию с увеличенными таймаутами."""
+    timeout = aiohttp.ClientTimeout(
+        connect=settings.telegram_connect_timeout,
+        total=settings.telegram_read_timeout,
+    )
+    connector = aiohttp.TCPConnector(
+        limit=10,
+        force_close=True,
+        enable_cleanup_closed=True,
+    )
+    return AiohttpSession(
+        timeout=timeout,
+        json_loads=lambda x: x,  # aiogram использует свой JSON-парсер
+    )
+
+
 async def main() -> None:
     """Инициализация и запуск бота."""
     if not settings.bot_token:
@@ -55,21 +106,52 @@ async def main() -> None:
     init_db()
     logger.info("БД аналитики готова")
 
-    # Создание бота
+    # Создание бота с кастомной сессией (увеличенные таймауты)
+    session = _make_session()
     bot = Bot(
         token=settings.bot_token,
+        session=session,
         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN),
     )
     dp = Dispatcher()
     register_handlers(dp)
 
     logger.info("Бот запускается... Модель LLM: %s", settings.llm_model)
+    logger.info(
+        "Таймауты: connect=%ds, read=%ds",
+        settings.telegram_connect_timeout,
+        settings.telegram_read_timeout,
+    )
 
-    # Удаляем webhook (на случай, если был установлен)
-    await bot.delete_webhook(drop_pending_updates=True)
+    # Проверка связи с Telegram API
+    if not await _check_connectivity(bot):
+        await session.close()
+        return
 
-    # Polling
-    await dp.start_polling(bot)
+    # Удаляем webhook (на случай, если был установлен) — с retry
+    for attempt in range(3):
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+            logger.info("Webhook удалён, pending updates сброшены")
+            break
+        except TelegramNetworkError as exc:
+            logger.warning("Не удалось удалить webhook (попытка %d): %s", attempt + 1, exc)
+            await asyncio.sleep(5)
+
+    # Polling с обработкой сетевых ошибок
+    logger.info("🚀 Polling запущен")
+    try:
+        await dp.start_polling(
+            bot,
+            handle_as_tasks=False,  # обрабатываем запросы последовательно
+            backoff_on_exception=(TelegramNetworkError, asyncio.TimeoutError),
+        )
+    except (TelegramNetworkError, asyncio.TimeoutError) as exc:
+        logger.error("Сетевая ошибка во время polling: %s. Перезапуск через 10s...", exc)
+        await asyncio.sleep(10)
+    finally:
+        await session.close()
+        logger.info("Сессия закрыта")
 
 
 if __name__ == "__main__":
