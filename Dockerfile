@@ -1,5 +1,5 @@
 # ── Этап 1: установка зависимостей ─────────────────────────────
-FROM python:3.14-slim AS builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /build
 
@@ -8,7 +8,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # ── Этап 2: runtime-образ ──────────────────────────────────────
-FROM python:3.14-slim
+FROM python:3.12-slim
 
 LABEL maintainer="Yandex Pro Navigator Bot"
 LABEL description="RAG-бот-навигатор по базе знаний для водителей Яндекс Про"
