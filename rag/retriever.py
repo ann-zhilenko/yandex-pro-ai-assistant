@@ -29,6 +29,7 @@ class SearchResult:
     region: str | None    # регион статьи (kz, by, ...) или None (универсальная)
     url_path: str
     valid_regions: list[str]
+    region_urls: dict[str, str] | None  # URL для конкретных регионов (универс. статьи)
     text: str
     score: float          # cosine similarity (0..1)
 
@@ -115,17 +116,40 @@ class Retriever:
             if driver_type and meta["driver_types"] and driver_type in meta["driver_types"]:
                 score_boost[i] *= 1.10  # +10% за совпадение типа водителя
             # Региональная фильтрация:
-            # - region=None → без фильтра (все регионы, включая kz, by...)
-            # - region="ru" → универсальные + RU
-            # - region="kz" → универсальные + KZ
-            if region is not None:
-                query_region = None if region == "ru" else region
+            # - region=None или "ru" → без фильтра (все статьи)
+            # - region="kz" → ru + универсальные + kz
+            # - region="by" → ru + универсальные + by
+            # RU-статьи = универсальный контент, доступный всем регионам.
+            if region is not None and region != "ru":
                 article_region = meta.get("region")
-                if article_region is not None and article_region != query_region:
+                # Исключаем статьи других регионов (by — для kz, uz — для kz, и т.д.)
+                if article_region is not None and article_region not in (None, "ru", region):
                     score_boost[i] = 0.0
 
         # Применяем буст
         scores = scores * score_boost
+
+        # Текстовый буст: +0.15 за каждое значимое слово запроса в заголовке.
+        # ТОЛЬКО для статей, не отфильтрованных по региону.
+        _STOP_WORDS = {"как", "что", "для", "при", "это", "или", "приложение",
+                       "водитель", "водителю", "водителя", "водители",
+                       "такси", "яндекс", "про", "заказ", "заказы", "поездк"}
+        query_words = set(
+            w.lower() for w in query.split()
+            if len(w) > 2 and w.lower() not in _STOP_WORDS
+        )
+        if query_words:
+            for i, meta in enumerate(self._metadata):
+                if score_boost[i] == 0.0:
+                    continue
+                title_lower = meta["title"].lower()
+                hits = sum(1 for w in query_words if w in title_lower)
+                if hits > 0:
+                    boost = 0.15 * hits
+                    # Для не-RU пользователей: снижаем буст RU-статей
+                    if region not in (None, "ru") and meta.get("region") == "ru":
+                        boost *= 0.3  # 70% штраф для RU-статей
+                    scores[i] += boost
 
         # Top-K
         top_indices = np.argsort(scores)[::-1][:settings.top_k]
@@ -144,6 +168,7 @@ class Retriever:
                     region=meta.get("region"),
                     url_path=meta.get("url_path", ""),
                     valid_regions=meta.get("valid_regions", []),
+                    region_urls=meta.get("region_urls"),
                     text=meta["text"],
                     score=score,
                 )
@@ -170,6 +195,7 @@ class Retriever:
                         region=meta.get("region"),
                         url_path=meta.get("url_path", ""),
                         valid_regions=meta.get("valid_regions", []),
+                        region_urls=meta.get("region_urls"),
                         text=meta["text"],
                         score=score,
                     )

@@ -69,9 +69,15 @@ def format_answer(answer: str, sources: list[SearchResult], region: str | None =
     seen_urls: set[str] = set()
     source_links: list[str] = []
     for src in sources:
-        # Если url_path не работает для региона пользователя — fallback на главную
         user_region = region or "ru"
-        if src.url_path and src.valid_regions and user_region not in src.valid_regions:
+        # Приоритет 1: точный URL из region_urls
+        if src.region_urls:
+            full_url = src.region_urls.get(
+                user_region,  # URL для региона пользователя
+                src.region_urls.get("ru") or next(iter(src.region_urls.values()))  # fallback: RU → любой
+            )
+        # Приоритет 2: строим из url_path + базовый URL региона (только если url_path проверен для региона)
+        elif src.url_path and src.valid_regions and user_region not in src.valid_regions:
             full_url = build_url(None, user_region)
         else:
             full_url = build_url(src.url_path, user_region)

@@ -231,7 +231,8 @@ async def handle_feedback(callback: CallbackQuery) -> None:
         await callback.answer("Спасибо за отзыв! 🙏")
     else:
         await callback.answer("Жаль, что не помогло. Мы работаем над улучшением.")
-    await callback.message.edit_reply_markup(reply_markup=None)
+    # Оставляем только кнопку «В меню»
+    await callback.message.edit_reply_markup(reply_markup=menu_button())
 
 
 # ── Ядро RAG-пайплайна ─────────────────────────────────────────
@@ -335,6 +336,16 @@ async def process_question(
             for r in results
         )
 
+        # При fallback на РФ: просим LLM игнорировать региональные детали
+        if is_rf_fallback or (region != "ru" and not has_own_kb(region)):
+            context = (
+                "ВНИМАНИЕ: пользователь из другого региона. Игнорируй специфичные для стран "
+                "суммы в местной валюте (тенге, рубли, сомы), названия местных органов "
+                "и адреса. Если в контексте есть такие детали — опусти их или замени "
+                "на общие формулировки.\n\n"
+                + context
+            )
+
         # 4. LLM-генерация (1 API-вызов)
         t_llm_start = time.monotonic()
         await _send_typing(message)
@@ -347,6 +358,10 @@ async def process_question(
 
     # 5. Форматирование
     formatted = formatter.format_answer(answer_text, results, region=search_region)
+
+    # Если LLM не нашёл ответ — не показываем ссылки на неподходящие статьи
+    if "не нашёл" in answer_text.lower() or "не нашла" in answer_text.lower():
+        formatted = answer_text.strip()
 
     # Пометка для ответов из РФ-fallback
     if is_rf_fallback:

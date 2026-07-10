@@ -32,6 +32,7 @@ class Chunk:
     region: str | None
     url_path: str
     valid_regions: list[str]
+    region_urls: dict[str, str] | None
     text: str
 
 
@@ -96,6 +97,7 @@ def _build_chunks(articles: list[dict]) -> list[Chunk]:
                     region=article.get("region"),
                     url_path=article.get("url_path", ""),
                     valid_regions=article.get("valid_regions", []),
+                    region_urls=article.get("region_urls"),
                     text=text,
                 )
             )
@@ -132,6 +134,11 @@ async def _validate_article_urls(articles: list[dict], client: httpx.AsyncClient
     broken_count = 0
 
     for article in articles:
+        # Статьи с region_urls уже имеют проверенные URL — пропускаем валидацию
+        if article.get("region_urls"):
+            article["valid_regions"] = list(article["region_urls"].keys())
+            continue
+
         url_path = article.get("url_path", "")
         if not url_path:
             article["valid_regions"] = all_regions
@@ -178,9 +185,18 @@ async def index_knowledge_base() -> None:
     logger.info("Загружено статей: %d", len(articles))
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        # Валидация URL до индексации
-        logger.info("Валидация URL статей...")
-        await _validate_article_urls(articles, client)
+        # Валидация URL — только для небольших БЗ (≤50 статей)
+        # Для больших БЗ со scraped-URL это избыточно и слишком медленно
+        if len(articles) <= 50:
+            logger.info("Валидация URL статей...")
+            await _validate_article_urls(articles, client)
+        else:
+            logger.info("Валидация URL пропущена (%d статей — слишком много)", len(articles))
+            from rag.regions import REGIONS_WITH_KB
+            all_regions = sorted(REGIONS_WITH_KB)
+            for article in articles:
+                if not article.get("valid_regions"):
+                    article["valid_regions"] = list(article.get("region_urls") or all_regions)
 
         chunks = _build_chunks(articles)
         logger.info("Создано чанков: %d", len(chunks))
@@ -206,6 +222,7 @@ async def index_knowledge_base() -> None:
             "region": c.region,
             "url_path": c.url_path,
             "valid_regions": c.valid_regions,
+            "region_urls": c.region_urls,
             "text": c.text,
         }
         for c in chunks

@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     embedding_model_query: str = "text-search-query"
 
     # ── RAG ───────────────────────────────────────────────────
-    chunk_size: int = 1500            # символов на чанк (~400 токенов)
+    chunk_size: int = 1000            # символов на чанк (~250 токенов, лимит API 2048)
     chunk_overlap: int = 200          # перекрытие в символах
     top_k: int = 3                    # сколько чанков передаём в LLM
     relevance_threshold: float = 0.35  # порог cosine similarity (Yandex embeddings дают ниже скор, чем OpenAI)
